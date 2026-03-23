@@ -227,9 +227,12 @@ include 'includes/header.php';
             raycaster: new THREE.Raycaster(),
             mouse: new THREE.Vector2(),
             isDragging: false,
+            isDraggingLayer: false,
+            isDraggingCorner: false,
             previousMousePosition: { x: 0, y: 0 },
             selectedLayerId: null,
-            layerDragMode: false
+            layerDragMode: false,
+            zoom: 1
         };
 
         // ==================== INITIALIZE SCENE ====================
@@ -303,29 +306,55 @@ include 'includes/header.php';
         function createRealisticMug() {
             const group = new THREE.Group();
 
-            // Main mug body - cylinder with good proportions
-            const bodyGeometry = new THREE.CylinderGeometry(0.7, 0.65, 1.2, 64, 32);
             const material = new THREE.MeshStandardMaterial({
                 color: customizer.currentColor,
                 roughness: 0.5,
                 metalness: 0,
-                side: THREE.DoubleSide
+                side: THREE.FrontSide
             });
+
+            // Main mug body - open-ended cylinder (no top/bottom caps)
+            const bodyGeometry = new THREE.CylinderGeometry(0.7, 0.65, 1.2, 64, 32, true);
             const body = new THREE.Mesh(bodyGeometry, material);
             body.castShadow = true;
             body.receiveShadow = true;
             group.add(body);
 
-            // Mug handle - more realistic using LatheGeometry for a smooth curve
+            // Mug rim/lip at top - torus ring (thinner)
+            const rimGeometry = new THREE.TorusGeometry(0.72, 0.04, 16, 64);
+            const rimMaterial = new THREE.MeshStandardMaterial({
+                color: customizer.currentColor,
+                roughness: 0.5,
+                metalness: 0
+            });
+            const rim = new THREE.Mesh(rimGeometry, rimMaterial);
+            rim.position.y = 0.65;
+            rim.rotation.x = Math.PI / 2;
+            rim.castShadow = true;
+            group.add(rim);
+
+            // Bottom of mug - disk
+            const bottomGeometry = new THREE.CylinderGeometry(0.65, 0.65, 0.08, 64);
+            const bottomMaterial = new THREE.MeshStandardMaterial({
+                color: customizer.currentColor,
+                roughness: 0.5,
+                metalness: 0
+            });
+            const bottom = new THREE.Mesh(bottomGeometry, bottomMaterial);
+            bottom.position.y = -0.62;
+            bottom.castShadow = true;
+            group.add(bottom);
+
+            // Mug handle - curved and realistic
             const points = [];
             points.push(new THREE.Vector2(0, 0));
-            points.push(new THREE.Vector2(0.05, 0.1));
-            points.push(new THREE.Vector2(0.15, 0.3));
-            points.push(new THREE.Vector2(0.18, 0.5));
-            points.push(new THREE.Vector2(0.18, 0.7));
-            points.push(new THREE.Vector2(0.15, 0.9));
-            points.push(new THREE.Vector2(0.05, 1.0));
-            points.push(new THREE.Vector2(0, 1.0));
+            points.push(new THREE.Vector2(0.06, 0.12));
+            points.push(new THREE.Vector2(0.16, 0.35));
+            points.push(new THREE.Vector2(0.19, 0.5));
+            points.push(new THREE.Vector2(0.19, 0.7));
+            points.push(new THREE.Vector2(0.16, 0.85));
+            points.push(new THREE.Vector2(0.06, 0.95));
+            points.push(new THREE.Vector2(0, 0.95));
 
             const handleGeometry = new THREE.LatheGeometry(points, 32, 0, Math.PI);
             const handleMaterial = new THREE.MeshStandardMaterial({
@@ -334,19 +363,12 @@ include 'includes/header.php';
                 metalness: 0
             });
             const handle = new THREE.Mesh(handleGeometry, handleMaterial);
-            handle.position.set(0.85, 0, 0);
-            handle.scale.set(0.4, 0.6, 0.4);
+            handle.position.set(0.88, 0.05, 0);
+            handle.scale.set(0.42, 0.6, 0.42);
             handle.castShadow = true;
             group.add(handle);
 
-            // Bottom base
-            const bottomGeometry = new THREE.CylinderGeometry(0.65, 0.65, 0.1, 64);
-            const bottom = new THREE.Mesh(bottomGeometry, material);
-            bottom.position.y = -0.6;
-            bottom.castShadow = true;
-            group.add(bottom);
-
-            // Set as product mesh for texture
+            // Set as product mesh for texture - only the body (sides)
             customizer.productMesh = body;
             customizer.productGroup.clear();
             customizer.productGroup.add(group);
@@ -445,18 +467,19 @@ include 'includes/header.php';
             canvas.height = 1024;
             const ctx = canvas.getContext('2d');
 
-            // White background
-            ctx.fillStyle = '#ffffff';
+            // Draw mug color as background
+            ctx.fillStyle = customizer.currentColor;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            // Draw uploaded image first (background)
+            // Draw uploaded image first (on top of color background)
             if (customizer.uploadedImage) {
                 const img = new Image();
                 img.onload = function() {
-                    const scale = Math.min(canvas.width / img.width, canvas.height / img.height) * 0.8;
-                    const x = (customizer.uploadedImage.x || 512) - (img.width * scale / 2);
-                    const y = (customizer.uploadedImage.y || 512) - (img.height * scale / 2);
-                    ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
+                    const imgWidth = customizer.uploadedImage.width || Math.min(canvas.width, canvas.height) * 0.6;
+                    const imgHeight = customizer.uploadedImage.height || imgWidth;
+                    const x = (customizer.uploadedImage.x || 512) - (imgWidth / 2);
+                    const y = (customizer.uploadedImage.y || 512) - (imgHeight / 2);
+                    ctx.drawImage(img, x, y, imgWidth, imgHeight);
                     
                     // Draw text layers on top
                     drawTextLayersOnCanvas(ctx);
@@ -464,6 +487,8 @@ include 'includes/header.php';
                     const texture = new THREE.CanvasTexture(canvas);
                     texture.needsUpdate = true;
                     if (customizer.productMesh) {
+                        // Use white to not tint the already-colored canvas
+                        customizer.productMesh.material.color.set('#ffffff');
                         customizer.productMesh.material.map = texture;
                         customizer.productMesh.material.needsUpdate = true;
                     }
@@ -474,6 +499,8 @@ include 'includes/header.php';
                 const texture = new THREE.CanvasTexture(canvas);
                 texture.needsUpdate = true;
                 if (customizer.productMesh) {
+                    // Use material color for text-only products
+                    customizer.productMesh.material.color.set(customizer.currentColor);
                     customizer.productMesh.material.map = texture;
                     customizer.productMesh.material.needsUpdate = true;
                 }
@@ -549,7 +576,21 @@ include 'includes/header.php';
                     btn.style.boxShadow = '0 0 0 2px white, 0 0 0 4px #E31E24';
 
                     // Update product color
-                    updateProductColor();
+                    if (customizer.uploadedImage) {
+                        // Re-render texture with new color background
+                        createTextTexture();
+                    } else {
+                        // Update all parts when no image
+                        updateProductColor();
+                    }
+
+                    // Update non-texture parts (handle, rim, bottom)
+                    customizer.productGroup.traverse((child) => {
+                        if (child !== customizer.productMesh && child.isMesh && child.material) {
+                            child.material.color.set(color);
+                            child.material.needsUpdate = true;
+                        }
+                    });
 
                     app.showNotification(`Color changed to ${btn.title}`, 'info');
                 });
@@ -651,7 +692,11 @@ include 'includes/header.php';
         function selectLayer(layerId) {
             customizer.selectedLayerId = layerId;
             customizer.layerDragMode = true;
-            app.showNotification('💡 Drag on the 3D product to reposition this layer', 'info');
+            if (layerId === 'image') {
+                app.showNotification('💡 Drag to move image • Drag from corners to resize', 'info');
+            } else {
+                app.showNotification('💡 Drag on the 3D product to reposition this text', 'info');
+            }
         }
 
         function removeTextLayer(id, event) {
@@ -732,6 +777,7 @@ include 'includes/header.php';
             canvas.addEventListener('mousedown', (e) => {
                 if (customizer.layerDragMode) {
                     // Allow dragging layers to reposition
+                    customizer.isDraggingLayer = true;
                     return;
                 }
                 customizer.isDragging = true;
@@ -743,11 +789,23 @@ include 'includes/header.php';
                 const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
                 const y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
 
-                if (customizer.layerDragMode && customizer.selectedLayerId) {
-                    // Reposition layer based on mouse position
+                if (customizer.isDraggingLayer && customizer.selectedLayerId) {
+                    // Reposition or resize layer based on mouse position
                     if (customizer.selectedLayerId === 'image' && customizer.uploadedImage) {
-                        customizer.uploadedImage.x = 512 + (x * 500);
-                        customizer.uploadedImage.y = 512 + (y * 500);
+                        const deltaX = e.clientX - (customizer.previousMousePosition?.x || e.clientX);
+                        const deltaY = e.clientY - (customizer.previousMousePosition?.y || e.clientY);
+                        
+                        // Check if dragging from corner (for resizing)
+                        const isNearCorner = Math.abs(deltaX) > 50 || Math.abs(deltaY) > 50;
+                        if (isNearCorner && customizer.isDraggingCorner) {
+                            // Resize mode
+                            customizer.uploadedImage.width = Math.max(50, (customizer.uploadedImage.width || 300) + deltaX);
+                            customizer.uploadedImage.height = Math.max(50, (customizer.uploadedImage.height || 300) + deltaY);
+                        } else {
+                            // Move mode
+                            customizer.uploadedImage.x = 512 + (x * 500);
+                            customizer.uploadedImage.y = 512 + (y * 500);
+                        }
                     } else {
                         const layer = customizer.textLayers.find(l => l.id === customizer.selectedLayerId);
                         if (layer) {
@@ -756,6 +814,7 @@ include 'includes/header.php';
                         }
                     }
                     createTextTexture();
+                    customizer.previousMousePosition = { x: e.clientX, y: e.clientY };
                     return;
                 }
 
@@ -777,16 +836,35 @@ include 'includes/header.php';
 
             canvas.addEventListener('mouseup', () => {
                 customizer.isDragging = false;
+                customizer.isDraggingLayer = false;
                 if (customizer.layerDragMode) {
                     customizer.layerDragMode = false;
                     customizer.selectedLayerId = null;
-                    app.showNotification('Layer repositioned! ✓', 'success');
+                    app.showNotification('Layer updated! ✓', 'success');
                 }
             });
 
             canvas.addEventListener('mouseleave', () => {
                 customizer.isDragging = false;
+                customizer.isDraggingLayer = false;
             });
+
+            // Mouse wheel zoom
+            canvas.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                const zoomSpeed = 0.1;
+                if (e.deltaY < 0) {
+                    // Zoom in
+                    customizer.zoom *= (1 + zoomSpeed);
+                } else {
+                    // Zoom out
+                    customizer.zoom *= (1 - zoomSpeed);
+                }
+                customizer.zoom = Math.max(0.5, Math.min(3, customizer.zoom));
+                if (customizer.camera) {
+                    customizer.camera.position.z = 2.5 / customizer.zoom;
+                }
+            }, { passive: false });
         }
 
         // ==================== CART BUTTONS ====================
